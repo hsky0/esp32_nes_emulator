@@ -1,0 +1,12 @@
+{
+    "idf.pythonInstallPath": "/usr/bin/python",
+    "files.associations": {
+        "nofrendo.h": "c",
+        "timer_group_struct.h": "c",
+        "limits": "c",
+        "cstddef": "c",
+        "numbers": "c",
+        "cstdlib": "c",
+        "ostream": "c"
+    }
+}
