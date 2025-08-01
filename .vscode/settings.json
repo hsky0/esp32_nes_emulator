@@ -7,6 +7,10 @@
         "cstddef": "c",
         "numbers": "c",
         "cstdlib": "c",
-        "ostream": "c"
+        "ostream": "c",
+        "ranges": "c",
+        "random": "c",
+        "functional": "c",
+        "type_traits": "c"
     }
 }
