@@ -7,6 +7,8 @@
         "cstddef": "c",
         "numbers": "c",
         "cstdlib": "c",
-        "ostream": "c"
+        "ostream": "c",
+        "gpio_struct.h": "c",
+        "psxcontroller.h": "c"
     }
 }
