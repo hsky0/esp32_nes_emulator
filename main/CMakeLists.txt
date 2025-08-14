@@ -17,5 +17,6 @@ idf_component_register(SRCS ${srcs}
                     "../components/nofrendo/sndhrdw/"
                     "../components/nofrendo/nes/"
                     "../components/nofrendo-esp32/"
+                    # REQUIRES esp_dirver_i2s
                     )
 

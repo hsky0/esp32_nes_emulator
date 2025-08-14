@@ -21,6 +21,7 @@
 #undef true
 #undef bool
 
+// #define SOC_I2S_HW_VERSION_2 1
 
 #include <math.h>
 #include <string.h>
@@ -35,11 +36,16 @@
 #include <nesinput.h>
 #include <osd.h>
 #include <stdint.h>
-// #include "driver/i2s.h"
+#include "driver/i2s_std.h"
+#include "driver/i2s_pdm.h"
 #include "sdkconfig.h"
 #include <spi_lcd.h>
 
 #include <psxcontroller.h>
+
+
+#include "driver/dac_continuous.h"
+
 
 
 #include "soc/timer_group_struct.h"
@@ -52,6 +58,16 @@
 #define  DEFAULT_WIDTH        256
 #define  DEFAULT_HEIGHT       NES_VISIBLE_HEIGHT
 
+#define AUDIO_SAMPLERATE 22050
+#define AUDIO_BUFFER_LENGTH 64
+#define BITS_PER_SAMPLE 16
+// Always bits_per_sample / 8
+#define BYTES_PER_SAMPLE 2
+#define I2S_DEVICE_ID 0
+#define PDM_TX_DOUT_IO 25
+
+// adding audio
+#define CONFIG_SOUND_ENA 1
 
 TimerHandle_t timer;
 
@@ -68,16 +84,20 @@ int osd_installtimer(int frequency, void *func, int funcsize, void *counter, int
 /*
 ** Audio
 */
+static int samplesPerPlayback = -1;
 static void (*audio_callback)(void *buffer, int length) = NULL;
 #if CONFIG_SOUND_ENA
 QueueHandle_t queue;
 static uint16_t *audio_frame;
+static i2s_chan_handle_t dac_tx = NULL;
+static dac_continuous_handle_t dac_handle = NULL;
 #endif
 
 static void do_audio_frame() {
 
 #if CONFIG_SOUND_ENA
-	int left=DEFAULT_SAMPLERATE/NES_REFRESH_RATE;
+	// int left=DEFAULT_SAMPLERATE/NES_REFRESH_RATE;
+	int left = AUDIO_SAMPLERATE /NES_REFRESH_RATE;
 	while(left) {
 		int n=DEFAULT_FRAGSIZE;
 		if (n>left) n=left;
@@ -87,9 +107,11 @@ static void do_audio_frame() {
 			audio_frame[i*2+1]=audio_frame[i];
 			audio_frame[i*2]=audio_frame[i];
 		}
-		i2s_write_bytes(0, audio_frame, 4*n, portMAX_DELAY);
+		size_t bytes_write = 0;
+		i2s_channel_write(dac_tx, audio_frame, 4 * n, &bytes_write, portMAX_DELAY);
 		left-=n;
 	}
+
 #endif
 }
 
@@ -102,31 +124,64 @@ void osd_setsound(void (*playfunc)(void *buffer, int length))
 static void osd_stopsound(void)
 {
    audio_callback = NULL;
+   printf("Sound stopped.\n");
+   /*停止i2s*/
+
+#if CONFIG_SOUND_ENA
+	free(audio_frame);
+#endif
 }
 
 
 static int osd_init_sound(void)
 {
 #if CONFIG_SOUND_ENA
-	audio_frame=malloc(4*DEFAULT_FRAGSIZE);
-	i2s_config_t cfg={
-		.mode=I2S_MODE_DAC_BUILT_IN|I2S_MODE_TX|I2S_MODE_MASTER,
-		.sample_rate=DEFAULT_SAMPLERATE,
-		.bits_per_sample=I2S_BITS_PER_SAMPLE_16BIT,
-		.channel_format=I2S_CHANNEL_FMT_RIGHT_LEFT,
-		.communication_format=I2S_COMM_FORMAT_I2S_MSB,
-		.intr_alloc_flags=0,
-		.dma_buf_count=4,
-		.dma_buf_len=512
-	};
-	i2s_driver_install(0, &cfg, 4, &queue);
-	i2s_set_pin(0, NULL);
-	i2s_set_dac_mode(I2S_DAC_CHANNEL_LEFT_EN); 
 
-	//I2S enables *both* DAC channels; we only need DAC1.
-	//ToDo: still needed now I2S supports set_dac_mode?
-	CLEAR_PERI_REG_MASK(RTC_IO_PAD_DAC1_REG, RTC_IO_PDAC1_DAC_XPD_FORCE_M);
-	CLEAR_PERI_REG_MASK(RTC_IO_PAD_DAC1_REG, RTC_IO_PDAC1_XPD_DAC_M);
+	
+	printf("Initializing sound\n");
+	/*申请音频缓存*/
+	// audio_frame=malloc(4*DEFAULT_FRAGSIZE);
+	// audio_frame = malloc(BYTES_PER_SAMPLE * AUDIO_BUFFER_LENGTH);
+	audio_frame = malloc(2048);
+	/*创建TX通道*/
+	i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
+	ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &dac_tx, NULL));
+	/*配置时钟，slot，gpio*/
+	/*初始化标准模式*/
+
+#if SOC_I2S_HW_VERSION_2	
+	i2s_pdm_tx_clk_config_t clk_cfg = I2S_PDM_TX_CLK_DAC_DEFAULT_CONFIG(AUDIO_SAMPLERATE);
+
+	i2s_pdm_tx_slot_config_t slot_cfg = I2S_PDM_TX_SLOT_DAC_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
+#else 	
+	i2s_pdm_tx_clk_config_t clk_cfg = I2S_PDM_TX_CLK_DEFAULT_CONFIG(AUDIO_SAMPLERATE);
+
+	i2s_pdm_tx_slot_config_t slot_cfg = I2S_PDM_TX_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
+#endif
+
+	i2s_pdm_tx_gpio_config_t gpio_cfg = {
+		.clk = I2S_GPIO_UNUSED,
+		.dout = PDM_TX_DOUT_IO,
+		.invert_flags = {
+			.clk_inv = false,
+		}
+	};
+
+	i2s_pdm_tx_config_t pdm_cfg = {
+		.clk_cfg = clk_cfg,
+		.slot_cfg = slot_cfg,
+		.gpio_cfg = gpio_cfg,
+	};
+
+	ESP_ERROR_CHECK(i2s_channel_init_pdm_tx_mode(dac_tx, &pdm_cfg));
+
+	/*使能通道*/
+	ESP_ERROR_CHECK(i2s_channel_enable(dac_tx));
+
+	samplesPerPlayback = AUDIO_SAMPLERATE / NES_REFRESH_RATE;
+
+	/*打印调试信息*/
+	printf("Finish initializing sound\n");
 
 #endif
 
@@ -260,7 +315,7 @@ static void videoTask(void *arg) {
 //		xQueueReceive(vidQueue, &bmp, portMAX_DELAY);//skip one frame to drop to 30
 		xQueueReceive(vidQueue, &bmp, portMAX_DELAY);
 		ili9341_write_frame(x, y, DEFAULT_WIDTH, DEFAULT_HEIGHT, (const uint8_t **)bmp->line);
-		vTaskDelay(1);
+		// vTaskDelay(1);
 	}
 
 }

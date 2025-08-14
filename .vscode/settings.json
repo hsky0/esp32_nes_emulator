@@ -11,6 +11,9 @@
         "ranges": "c",
         "random": "c",
         "functional": "c",
-        "type_traits": "c"
+        "type_traits": "c",
+        "i2s_pdm.h": "c",
+        "dac_continuous.h": "c",
+        "soc_caps.h": "c"
     }
 }

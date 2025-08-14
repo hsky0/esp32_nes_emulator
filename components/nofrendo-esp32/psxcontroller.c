@@ -239,7 +239,7 @@ int psxReadInput() {
         nes_100ask_joypad_check_delay(400);
 		// DELAY();
     }
-	printf("in psx b2b1 = %x\n", b2b1);
+	// printf("in psx b2b1 = %x\n", b2b1);
 
 	
 
